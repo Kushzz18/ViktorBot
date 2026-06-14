@@ -1,0 +1,42 @@
+[
+  {
+    "client": "Example Client X",
+    "slackChannel": "example-client-x",
+    "gscSite": "https://example.com/",
+    "ga4PropertyId": "123456789",
+    "mainCountry": "usa",
+    "googleProfile": "default",
+    "clickupListName": "Example Client X SEO",
+    "team": "Team AB",
+    "techOwner": "Teammate X",
+    "devOwner": "Teammate Y",
+    "responsiblePeople": [
+      "Teammate X"
+    ],
+    "ownerSlackUserIds": [
+      "U0123456789"
+    ],
+    "teamSlackUserIds": [
+      "U1111111111",
+      "U2222222222"
+    ],
+    "moneyPages": [
+      {
+        "url": "https://example.com/service/",
+        "expectedSchemaTypes": [
+          "Service"
+        ]
+      }
+    ]
+  },
+  {
+    "client": "Example Client Y",
+    "slackChannel": "example-client-y",
+    "gscSite": "sc-domain:example.org",
+    "ga4PropertyId": null,
+    "mainCountry": "global",
+    "googleProfile": "rankmetop",
+    "clickupListName": "Example Client Y SEO",
+    "team": "Team CD"
+  }
+]
