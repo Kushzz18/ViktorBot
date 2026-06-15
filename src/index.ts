@@ -73,7 +73,15 @@ import {
   searchClickUpTasks,
   updateClickUpTask
 } from "./clickup.js";
-import { askAssistant, classifyAlertThreadIntent, classifyStructuredIntent, composeSlackMessage } from "./ai.js";
+import {
+  askAssistant,
+  classifyAlertThreadIntent,
+  classifyStructuredIntent,
+  composeSlackMessage,
+  extractClientLogFacts,
+  extractPriorityListUpdate,
+  type PriorityListExtraction
+} from "./ai.js";
 import {
   answerDriveKnowledgeQuestion,
   answerDriveKnowledgeUrlQuestion,
@@ -4935,6 +4943,9 @@ async function handleClientMemoryCommand(text: string, inferredClientName?: stri
     return formatPriorityUrls(clientName);
   }
 
+  const aiPriority = await maybeExtractPriorityListUpdate(text, inferredClientName);
+  if (aiPriority) return applyPriorityListExtraction(aiPriority, inferredClientName);
+
   const genericRemoveMatch = text.match(/^(?:remove|delete)\s+(?:the\s+)?(?:client\s+)?(?:log|record|note|memory|log item)\s+([\s\S]+)$/i)
     ?? text.match(/^(?:remove|delete)\s+(?:the\s+)?(?:recently\s+added|latest|last|newest)\s+(?:client\s+)?(?:log|record|note|memory|log item)\s+([\s\S]+)$/i);
   const removeMatch = text.match(/^(?:remove|delete)\s+(?:client\s+)?(?:log|memory|notes?)\s*(?:for\s+(.+?))?\s*(?:#|number\s+)?(\d+)$/i)
@@ -4964,7 +4975,7 @@ async function handleClientMemoryCommand(text: string, inferredClientName?: stri
   if (addMatch?.[2]) {
     const clientName = cleanClientRequestName(addMatch[1] || inferredClientName || "");
     if (!clientName) return "Which client should I save this under?";
-    const saved = await addClientNote(clientName, addMatch[2], author);
+    const saved = await saveClientLogNote(clientName, addMatch[2], author);
     return [`*Client log update for ${clientName}:*`, formatClientNotePreview(saved ?? addMatch[2])].join("\n");
   }
 
@@ -5137,6 +5148,78 @@ function splitPriorityList(value: string): string[] {
     .slice(0, 100);
 }
 
+async function saveClientLogNote(clientName: string, noteText: string, author?: string): Promise<string | undefined> {
+  const cleanedSource = sanitizeSlackText(noteText);
+  const facts = shouldUseAiClientLogExtraction(cleanedSource)
+    ? (await extractClientLogFacts(cleanedSource, clientName))?.facts
+    : undefined;
+  const summary = facts?.length ? facts.join("\n") : cleanedSource;
+  return addClientNote(clientName, summary, author, undefined, cleanedSource);
+}
+
+function shouldUseAiClientLogExtraction(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  if (normalized.length > 300) return true;
+  if (normalized.split(/(?<=[.!?])\s+/).filter(Boolean).length >= 3) return true;
+  return /\b(client message|client response|business context|problem|issue|concern|strategy|seo|google|search engines?|traffic|ranking|conversion|available|sold out|custom orders?)\b/i.test(normalized);
+}
+
+async function maybeExtractPriorityListUpdate(text: string, inferredClientName?: string): Promise<PriorityListExtraction | undefined> {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!shouldUseAiPriorityExtraction(normalized)) return undefined;
+  return extractPriorityListUpdate(normalized, inferredClientName ? `Inferred client: ${inferredClientName}` : undefined);
+}
+
+function shouldUseAiPriorityExtraction(text: string): boolean {
+  if (!text) return false;
+  if (isPriorityListStatusRequest(text)) return false;
+  const hasPrioritySignal = /\b(priority|important|focus|track|monitor|watch|keep an eye|look out|keywords?|queries?|search terms?|urls?|pages?)\b/i.test(text);
+  const hasMutationSignal = /\b(add|save|remember|store|include|track|monitor|watch|keep an eye|focus|important|remove|delete|drop|stop tracking|exclude|replace|overwrite|set|use only|new list)\b/i.test(text);
+  const hasValueSignal = /https?:\/\/|[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)|["“][^"”]{3,}["”]|[:,\n]/i.test(text);
+  return hasPrioritySignal && hasMutationSignal && hasValueSignal;
+}
+
+async function applyPriorityListExtraction(extraction: PriorityListExtraction, inferredClientName?: string): Promise<string> {
+  const clientName = cleanClientRequestName(extraction.clientName || inferredClientName || "");
+  if (!clientName) return "Which client should I update the priority list for?";
+
+  const queries = extraction.queries;
+  const urls = extraction.urls;
+  if (!queries.length && !urls.length) return "I could not find priority keywords or URLs to update.";
+
+  if (extraction.action === "replace") {
+    if (queries.length) await replacePriorityQueries(clientName, queries);
+    if (urls.length) await replacePriorityUrls(clientName, urls);
+    return [
+      `Replaced priority monitoring items for ${clientName}:`,
+      queries.length ? `- ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` : "",
+      urls.length ? `- ${urls.length} URL${urls.length === 1 ? "" : "s"}` : ""
+    ].filter(Boolean).join("\n");
+  }
+
+  if (extraction.action === "remove") {
+    const removedQueries = queries.length ? await removePriorityQueries(clientName, queries) : [];
+    const removedUrls = urls.length ? await removePriorityUrls(clientName, urls) : [];
+    rememberPriorityRemoval(clientName, removedQueries, removedUrls);
+    if (!removedQueries.length && !removedUrls.length) return `I could not find those priority items for ${clientName}.`;
+    return [
+      `Updated priority list for ${clientName}.`,
+      removedQueries.length ? `Removed queries:\n${removedQueries.map((item) => `- ${item}`).join("\n")}` : "",
+      removedUrls.length ? `Removed URLs:\n${removedUrls.map((item) => `- ${item}`).join("\n")}` : ""
+    ].filter(Boolean).join("\n");
+  }
+
+  if (queries.length) await addPriorityQueries(clientName, queries);
+  if (urls.length) await addPriorityUrls(clientName, urls);
+  return [
+    `Saved priority monitoring list for ${clientName}:`,
+    queries.length ? `- ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` : "",
+    urls.length ? `- ${urls.length} URL${urls.length === 1 ? "" : "s"}` : "",
+    "I will highlight these first when daily anomalies or weekly/monthly reports touch them."
+  ].filter(Boolean).join("\n");
+}
+
 async function formatClientMemoryWithSource(clientName: string): Promise<string> {
   const exact = (await loadClients()).find((client) => normalizeLoose(client.client) === normalizeLoose(clientName));
   const inferred = exact ?? await inferClientFromText(clientName);
@@ -5181,7 +5264,7 @@ async function handleSaveThisToClientLogCommand(
   const fallbackNote = note ?? await getPreviousHumanChannelMessage(client, channel, currentTs);
   if (!fallbackNote) return "I could not find a previous human message to save. Reply with `add client log: <note>` and I will store it.";
 
-  const saved = await addClientNote(clientName, fallbackNote, author);
+  const saved = await saveClientLogNote(clientName, fallbackNote, author);
   return [`*Client log update for ${clientName}:*`, formatClientNotePreview(saved ?? fallbackNote)].join("\n");
 }
 

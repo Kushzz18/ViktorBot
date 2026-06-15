@@ -12,6 +12,17 @@ export type AlertThreadIntent = "explain" | "affected_urls" | "urgency" | "creat
 
 type AiModelRole = "chat" | "classifier" | "report" | "reasoning";
 
+export type ClientLogFactsExtraction = {
+  facts: string[];
+};
+
+export type PriorityListExtraction = {
+  action: "add" | "remove" | "replace";
+  clientName?: string;
+  queries: string[];
+  urls: string[];
+};
+
 export async function askAssistant(conversationId: string, userText: string, context?: string): Promise<string> {
   if (!hasOpenRouterKey()) {
     return [
@@ -158,15 +169,130 @@ export async function classifyStructuredIntent(userText: string, context?: strin
   }
 }
 
-function parseNaturalIntentJson(value?: string, userText = ""): NaturalIntent | undefined {
-  if (!value) return undefined;
-  const json = value.match(/\{[\s\S]*\}/)?.[0] ?? value;
+export async function extractClientLogFacts(userText: string, clientName?: string): Promise<ClientLogFactsExtraction | undefined> {
+  if (!hasOpenRouterKey()) return undefined;
+
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: [
+        "Extract durable client-memory facts from a Slack client message for an SEO operations team.",
+        "Return only compact JSON. No markdown. No explanation.",
+        "Shape: {\"facts\":[\"Fact sentence\", \"Fact sentence\"]}",
+        "Facts must be useful later for SEO work, reporting, client context, task decisions, or strategy.",
+        "Keep facts concise but complete. Preserve important numbers, dates, product/status details, asks, concerns, and URLs.",
+        "Do not invent anything. Do not include greetings, thanks, or filler.",
+        "If the message is short and the whole sentence matters, return that sentence as a fact.",
+        "Prefer 1-10 facts. Never return an empty list if there is meaningful client context."
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: [
+        clientName ? `Client: ${clientName}` : "",
+        `Message:\n${userText.slice(0, 8000)}`
+      ].filter(Boolean).join("\n\n")
+    }
+  ];
+
   try {
-    const parsed = JSON.parse(json) as Record<string, unknown>;
+    const data = await sendOpenRouterChat({
+      messages,
+      max_tokens: 900,
+      temperature: 0
+    }, "classifier");
+    const parsed = parseJsonObject(data.choices?.[0]?.message?.content);
+    const facts = cleanStringList(parsed?.facts).slice(0, 12);
+    return facts.length ? { facts } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function extractPriorityListUpdate(userText: string, context?: string): Promise<PriorityListExtraction | undefined> {
+  if (!hasOpenRouterKey()) return undefined;
+
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: [
+        "Extract a priority keyword/URL list update for an SEO operations Slack bot.",
+        "Return only compact JSON. No markdown. No explanation.",
+        "Shape: {\"action\":\"add|remove|replace\",\"clientName\":\"optional\",\"queries\":[\"keyword\"],\"urls\":[\"https://example.com/page\"]}",
+        "Use queries for search terms, keywords, topics, and phrases to monitor.",
+        "Use urls for webpages, domains, paths, or page URLs to monitor.",
+        "Use add when the user says track, monitor, keep an eye on, save, include, add, remember, priority, focus, or important.",
+        "Use remove when the user says remove, delete, drop, stop tracking, exclude, no longer priority.",
+        "Use replace only when the user clearly says replace, overwrite, set the list to, use only, or new list.",
+        "Do not classify a request to show/list/fetch existing priority items as an update.",
+        "If no actionable priority update exists, return {\"action\":\"add\",\"queries\":[],\"urls\":[]}."
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: [`Message: ${userText}`, context ? `Context:\n${context.slice(-1200)}` : ""].filter(Boolean).join("\n\n")
+    }
+  ];
+
+  try {
+    const data = await sendOpenRouterChat({
+      messages,
+      max_tokens: 500,
+      temperature: 0
+    }, "classifier");
+    return normalizePriorityListExtraction(parseJsonObject(data.choices?.[0]?.message?.content));
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNaturalIntentJson(value?: string, userText = ""): NaturalIntent | undefined {
+  try {
+    const parsed = parseJsonObject(value);
+    if (!parsed) return undefined;
     return normalizeNaturalIntent(parsed, userText);
   } catch {
     return undefined;
   }
+}
+
+function parseJsonObject(value?: string): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const json = value.match(/\{[\s\S]*\}/)?.[0] ?? value;
+  const parsed = JSON.parse(json) as unknown;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : undefined;
+}
+
+function cleanStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value
+      .map((item) => typeof item === "string" ? item.replace(/\s+/g, " ").trim() : "")
+      .filter(Boolean))]
+    : [];
+}
+
+function normalizePriorityListExtraction(parsed?: Record<string, unknown>): PriorityListExtraction | undefined {
+  if (!parsed) return undefined;
+  const action = String(parsed.action ?? "").toLowerCase();
+  if (!["add", "remove", "replace"].includes(action)) return undefined;
+  const queries = cleanStringList(parsed.queries).filter((item) => !looksLikeUrl(item)).slice(0, 100);
+  const urls = cleanStringList(parsed.urls).filter(looksLikeUrl).slice(0, 100);
+  if (!queries.length && !urls.length) return undefined;
+  const clientName = typeof parsed.clientName === "string" && parsed.clientName.trim()
+    ? parsed.clientName.trim()
+    : undefined;
+  return {
+    action: action as "add" | "remove" | "replace",
+    clientName,
+    queries,
+    urls
+  };
+}
+
+function looksLikeUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value) || /^[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)/i.test(value);
 }
 
 function normalizeNaturalIntent(parsed: Record<string, unknown>, userText = ""): NaturalIntent | undefined {

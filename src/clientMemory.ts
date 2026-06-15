@@ -7,6 +7,7 @@ type ClientNote = {
   createdAt: string;
   author?: string;
   source?: string;
+  sourceText?: string;
 };
 
 type ClientMemoryState = {
@@ -43,13 +44,20 @@ export async function loadClientMemory() {
   }
 }
 
-export async function addClientNote(clientName: string, text: string, author?: string, source?: string): Promise<string | undefined> {
+export async function addClientNote(clientName: string, text: string, author?: string, source?: string, sourceText?: string): Promise<string | undefined> {
   const key = normalizeClient(clientName);
   const cleaned = prepareClientNoteText(text);
   if (!cleaned) return;
+  const cleanedSourceText = sourceText ? stripClientLogWrappers(cleanNoteText(sourceText)) : undefined;
   const fingerprint = noteFingerprint(cleaned);
   state.notes[key] = [
-    { text: cleaned, author, source, createdAt: new Date().toISOString() },
+    {
+      text: cleaned,
+      author,
+      source,
+      sourceText: cleanedSourceText && normalizeLookup(cleanedSourceText) !== normalizeLookup(cleaned) ? cleanedSourceText : undefined,
+      createdAt: new Date().toISOString()
+    },
     ...(state.notes[key] ?? []).filter((note) => noteFingerprint(note.text) !== fingerprint)
   ].slice(0, 200);
   await saveClientMemory();
