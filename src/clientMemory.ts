@@ -334,7 +334,9 @@ function prepareClientNoteText(text: string): string {
   const existingFacts = extractExistingFactLines(cleaned);
   if (existingFacts.length >= 2) return existingFacts.join("\n");
   const facts = extractSmartClientFacts(cleaned);
-  return facts.length ? facts.join("\n") : cleaned;
+  if (facts.length >= 2) return facts.join("\n");
+  if (facts.length === 1 && shouldUseSingleExtractedFact(cleaned, facts[0])) return facts[0];
+  return cleaned;
 }
 
 function stripClientLogWrappers(text: string): string {
@@ -351,10 +353,13 @@ function extractSmartClientFacts(text: string): string[] {
   if (!compact) return [];
 
   const facts: string[] = [];
-  const website = text.match(/\bWebsite\s*:\s*(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,}\S*)/i);
+  const website = text.match(/(?:^|\n)\s*Website\s*:\s*(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,}\S*)/i);
   if (website?.[1]) facts.push(`Website: ${cleanUrlish(website[1])}`);
 
-  const status = text.match(/\bStatus\s*:\s*([^\n]+)/i);
+  const mentionedWebsite = compact.match(/\bwe\s+are\s+(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,})(?:\b|[.,])/i);
+  if (!website?.[1] && mentionedWebsite?.[1]) facts.push(`Website: ${cleanUrlish(mentionedWebsite[1])}`);
+
+  const status = text.match(/(?:^|\n)\s*Status\s*:\s*([^\n]+)/i);
   if (status?.[1]) facts.push(`Status: ${cleanFactValue(status[1])}`);
 
   if (/\ball access provided\b/i.test(compact)) facts.push("Access: All access provided");
@@ -364,7 +369,7 @@ function extractSmartClientFacts(text: string): string[] {
   const competitors = extractSectionUrls(text, /competitor urls?/i);
   if (competitors.length) facts.push(`Competitors: ${competitors.join(", ")}`);
 
-  const staging = text.match(/\b(?:sandbox|staging)\s*(?:\/\s*staging)?\s*url\s*:\s*(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,}\S*)/i);
+  const staging = text.match(/(?:^|\n)\s*(?:sandbox|staging)\s*(?:\/\s*staging)?\s*url\s*:\s*(https?:\/\/\S+|[a-z0-9.-]+\.[a-z]{2,}\S*)/i);
   if (staging?.[1]) facts.push(`Staging URL: ${cleanUrlish(staging[1])}`);
 
   if (/\bnew staging site\b/i.test(compact) && /\b(final and ready|ready)\b/i.test(compact)) {
@@ -411,20 +416,97 @@ function extractSmartClientFacts(text: string): string[] {
   const years = compact.match(/\b(\d{2,})\+?\s*years\b/i);
   if (years?.[1]) facts.push(`Total manufacturing experience: ${years[1]}+ years`);
 
+  const businessContext = extractBusinessContext(compact);
+  if (businessContext) facts.push(`Business context: ${businessContext}`);
+
+  const problem = firstSentenceMatching(text, /\bproblem\s+is\b|\bissue\s+is\b|\bconcern\s+is\b/i);
+  if (problem) facts.push(`Client problem: ${problem}`);
+
+  const currentSetup = firstSentenceMatching(text, /\b(?:directed|redirected|linked|menu|dropdown|category level page|sold out|central .* page)\b/i);
+  if (currentSetup) facts.push(`Current site setup: ${currentSetup}`);
+
+  const seoConcern = firstSentenceMatching(text, /\bSEO\b|\bsearch engines?\b|\bGoogle\b/i, /\b(?:hurting|impact|affect|problem|concern|rank|traffic|visibility)\b/i);
+  if (seoConcern) facts.push(`SEO concern: ${seoConcern}`);
+
+  const productStatus =
+    firstSentenceMatching(text, /\b(?:available for sale|taking custom orders|started doing the work|now have available|new ones as they are developed)\b/i)
+    ?? firstSentenceMatching(text, /\b(?:new .* line|developed|developing)\b/i);
+  if (productStatus) facts.push(`Product status: ${productStatus}`);
+
+  const clientAsk =
+    firstSentenceMatching(text, /\b(?:would like to know|want to know|thoughts about|what do you think|what should we do|is this hurting us)\b/i)
+    ?? firstSentenceMatching(text, /\bget your input\b/i);
+  if (clientAsk) facts.push(`Client ask: ${clientAsk}`);
+
+  const urls = [...compact.matchAll(/https?:\/\/[^\s>)]+|[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s>)]+)?/gi)]
+    .map((match) => cleanUrlish(match[0]))
+    .filter((url) => !website?.[1] || normalizeUrl(url) !== normalizeUrl(website[1]));
+  const relevantUrls = dedupeStrings(urls).slice(0, 6);
+  if (relevantUrls.length) facts.push(`Relevant URLs: ${relevantUrls.join(", ")}`);
+
   return dedupeStrings(facts).slice(0, 12);
+}
+
+function shouldUseSingleExtractedFact(text: string, fact: string): boolean {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= 360) return true;
+  if (extractSentenceList(text).length <= 2) return true;
+  return normalizeLookup(compact) === normalizeLookup(fact);
+}
+
+function extractBusinessContext(text: string): string | undefined {
+  const soldMatch = text.match(/\bfor\s+(?:the\s+)?(?:nearly\s+)?\d{1,3}\+?\s+years?\b[^.?!]*?\b(?:has|have)\s+sold\s+([^.?!]+)/i);
+  if (soldMatch?.[1]) return cleanFactValue(`Has sold ${soldMatch[1]}`);
+
+  const sellMatch = text.match(/\b(?:we|they|the company)\s+(?:sell|sells|offer|offers|provide|provides|manufacture|manufactures)\s+([^.?!]+)/i);
+  if (sellMatch?.[1]) return cleanFactValue(sellMatch[0]);
+
+  return undefined;
+}
+
+function firstSentenceMatching(text: string, required: RegExp, secondary?: RegExp): string | undefined {
+  for (const sentence of extractSentenceList(text)) {
+    if (required.test(sentence) && (!secondary || secondary.test(sentence))) {
+      return cleanSentenceForFact(sentence);
+    }
+  }
+  return undefined;
+}
+
+function extractSentenceList(text: string): string[] {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function cleanSentenceForFact(sentence: string): string {
+  return sentence
+    .replace(/\s*\(\s*(https?:\/\/[^)]+|[a-z0-9.-]+\.[a-z]{2,}[^)]*)\s*\)/gi, " ($1)")
+    .replace(/\s+/g, " ")
+    .replace(/[.;,\s]+$/g, "")
+    .trim();
 }
 
 function extractExistingFactLines(text: string): string[] {
   const allowedLabels = new Set([
     "access",
+    "business context",
+    "client ask",
+    "client problem",
     "company founded",
     "competitors",
     "current website launched",
+    "current site setup",
     "historical customer acquisition",
     "launch history",
     "platform",
+    "product status",
     "recent focus",
+    "relevant urls",
     "seasonality",
+    "seo concern",
     "staging status",
     "staging url",
     "status",
