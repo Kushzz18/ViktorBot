@@ -2113,7 +2113,7 @@ async function runManualMonitoringCommand(
       await client.chat.postMessage({
         channel: replyChannel,
         thread_ts: threadTs,
-        text: googleHealthMessage(health.error, health.userAction)
+        text: googleHealthMessage(health.error, health.userAction, health.kind)
       });
       return;
     }
@@ -2334,7 +2334,7 @@ async function runDashboardWorkflow(id: string): Promise<string> {
       }
 
       const health = await checkGoogleApiHealth();
-      if (!health.ok) return googleHealthMessage(health.error, health.userAction);
+      if (!health.ok) return googleHealthMessage(health.error, health.userAction, health.kind);
 
       const prepared = getPreparedDailyReport();
       const report = prepared ?? await prepareDashboardDailyReport();
@@ -2683,7 +2683,7 @@ async function runScheduledMonitoring(client: SlackClient, logger: BotLogger) {
     latestDailyPreparedAt = 0;
     const health = await checkGoogleApiHealth();
     if (!health.ok) {
-      await notifyGoogleHealthIssue(client, health.error, health.userAction);
+      await notifyGoogleHealthIssue(client, health.error, health.userAction, health.kind);
       return false;
     }
 
@@ -2737,8 +2737,10 @@ function getPreparedDailyReport(): Awaited<ReturnType<typeof runDailyMonitoring>
   return latestDailyPreparedReport;
 }
 
-async function notifyGoogleHealthIssue(client: SlackClient, error?: string, userAction?: string) {
-  const key = `google-health:${localDateKey(new Date())}:${error ?? "unknown"}`;
+async function notifyGoogleHealthIssue(client: SlackClient, error?: string, userAction?: string, kind = "api") {
+  const key = kind === "network"
+    ? `google-health:${localDateKey(new Date())}:network`
+    : `google-health:${localDateKey(new Date())}:${error ?? "unknown"}`;
   if (hasAlerted(key)) return;
 
   const recipient = getMostRecentDmUser();
@@ -2747,7 +2749,7 @@ async function notifyGoogleHealthIssue(client: SlackClient, error?: string, user
 
   await client.chat.postMessage({
     channel: target,
-    text: googleHealthMessage(error, userAction)
+    text: googleHealthMessage(error, userAction, kind)
   });
   await markAlerted(key);
 }
@@ -2811,10 +2813,13 @@ async function postClickUpWorkloadDigestByTeam(
   return posted;
 }
 
-function googleHealthMessage(error?: string, userAction?: string): string {
+function googleHealthMessage(error?: string, userAction?: string, kind = "api"): string {
+  const isNetwork = kind === "network";
   return [
-    "*Viktor Google API check failed*",
-    "I skipped scheduled GSC/GA4 monitoring so I do not send inaccurate or noisy client alerts.",
+    isNetwork ? "*Viktor network check failed while calling Google*" : "*Viktor Google API check failed*",
+    isNetwork
+      ? "I skipped scheduled GSC/GA4 monitoring because this laptop could not resolve or reach a required Google/Slack endpoint reliably."
+      : "I skipped scheduled GSC/GA4 monitoring so I do not send inaccurate or noisy client alerts.",
     `Error: ${error ?? "Unknown Google API error"}`,
     userAction ? `Action needed: ${userAction}` : undefined
   ].filter(Boolean).join("\n");
@@ -3963,7 +3968,7 @@ async function sendDataRequestResponse(
   await runWithManualPriority(async () => {
   const health = await checkGoogleApiHealth();
   if (!health.ok) {
-    await client.chat.postMessage({ channel: dmChannel, thread_ts: threadTs, text: googleHealthMessage(health.error, health.userAction) });
+    await client.chat.postMessage({ channel: dmChannel, thread_ts: threadTs, text: googleHealthMessage(health.error, health.userAction, health.kind) });
     return;
   }
 
