@@ -473,6 +473,7 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
   for (const task of tasks) {
     const assignees = task.assignees.length ? task.assignees : ["Unassigned"];
     for (const assignee of assignees) {
+      if (assignee === "Unassigned") continue;
       const person = rosterMembers.length ? matchRosterMember(assignee, rosterMembers) ?? cleanPersonName(assignee) : cleanPersonName(assignee);
       if (!person) continue;
       const existing = people.get(person) ?? [];
