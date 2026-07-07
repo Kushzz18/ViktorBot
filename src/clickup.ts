@@ -539,11 +539,18 @@ function personMatchesRosterMember(normalizedName: string, member: string): bool
   return rosterMemberAliases(member).some((alias) =>
     normalizedName === alias ||
     normalizedName.includes(alias) ||
-    alias.split(/\s+/).every((part) => normalizedName.includes(part))
+    aliasMatchesAssignee(normalizedName, alias)
   );
 }
 
+function aliasMatchesAssignee(normalizedName: string, alias: string): boolean {
+  const parts = alias.split(/\s+/).filter((part) => part.length > 2);
+  if (parts.length <= 1) return Boolean(parts[0] && normalizedName.includes(parts[0]));
+  return parts.every((part) => normalizedName.includes(part));
+}
+
 function uniqueFirstNameRosterMatch(normalizedName: string, rosterMembers: string[]): string | undefined {
+  if (normalizedName === "chirag") return undefined;
   if (!normalizedName || normalizedName.includes(" ")) return undefined;
   const matches = rosterMembers.filter((member) => normalizePersonName(firstName(member)) === normalizedName);
   return matches.length === 1 ? matches[0] : undefined;

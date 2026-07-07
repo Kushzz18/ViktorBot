@@ -364,6 +364,7 @@ const WORKFLOW_TEAM_MEMBERS: Record<WorkflowTeam, string[]> = {
     "Sushan",
     "Kuber Kathayat",
     "Shishir",
+    "Anisha Maharjan",
     "Chirag Agrawal",
     "Ashmita Pandey",
     "Prativa Shrestha",
@@ -388,11 +389,11 @@ const WORKFLOW_TEAM_MEMBERS: Record<WorkflowTeam, string[]> = {
     "Anish Shrestha",
     "Deepak Chaudhary",
     "Bhuwan",
-    "Roshan Sah",
     "Neha Khadka",
     "Shreejal Mhrzn",
     "Rajeev",
     "Rojen Shrestha",
+    "Anisha Maharjan",
     "Ashmita Pandey",
     "Prativa Shrestha",
     "Subina Khadka",
@@ -3146,13 +3147,10 @@ function assigneeMatchesTeamMember(assignee: string, member: string): boolean {
   const normalizedAssignee = normalizePersonForWorkload(assignee);
   const normalizedMember = normalizePersonForWorkload(member);
   if (!normalizedAssignee || !normalizedMember) return false;
-  const assigneeFirst = normalizedAssignee.split(/\s+/)[0];
-  const memberFirst = normalizedMember.split(/\s+/)[0];
   return normalizedAssignee === normalizedMember ||
     normalizedAssignee.includes(normalizedMember) ||
     normalizedMember.includes(normalizedAssignee) ||
-    normalizedMember.split(/\s+/).every((part) => normalizedAssignee.includes(part)) ||
-    (assigneeFirst === "chirag" && memberFirst === "chirag");
+    normalizedMember.split(/\s+/).every((part) => normalizedAssignee.includes(part));
 }
 
 function normalizePersonForWorkload(value: string): string {
