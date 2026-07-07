@@ -1044,6 +1044,8 @@ function dashboardHtml(): string {
             if (!response.ok || !result.ok) throw new Error(result.error || 'Could not send workflow');
             toast(result.message || 'Workflow sent');
             await refresh();
+          } catch (error) {
+            toast(error.message || String(error), true);
           } finally {
             target.disabled = false;
             target.textContent = originalText || 'Send';

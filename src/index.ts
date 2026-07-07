@@ -2783,11 +2783,18 @@ async function notifyGoogleHealthIssue(client: SlackClient, error?: string, user
   const target = recipient || getReportChannel();
   if (!target) return;
 
-  await client.chat.postMessage({
-    channel: target,
-    text: googleHealthMessage(error, userAction, kind)
-  });
-  await markAlerted(key);
+  const text = googleHealthMessage(error, userAction, kind);
+  try {
+    const channel = recipient
+      ? (await client.conversations.open({ users: recipient })).channel?.id ?? recipient
+      : target;
+
+    await client.chat.postMessage({ channel, text });
+    await markAlerted(key);
+  } catch (postError) {
+    console.warn("Could not send Google health notification:", extractSlackErrorCode(postError) ?? postError);
+    await markAlerted(key);
+  }
 }
 
 async function runScheduledClickUpWorkload(client: SlackClient, logger: BotLogger) {
