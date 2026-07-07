@@ -483,6 +483,7 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
   const displayNames = shortDisplayNames([...people.keys()]);
   const rows = [...people.entries()]
     .map(([name, assignedTasks]) => [name, assignedTasks.filter((task) => !isCompleteStatus(task.status))] as const)
+    .filter(([, activeAssignedTasks]) => activeAssignedTasks.length > 0)
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([name, activeAssignedTasks]) => [
       displayNames.get(name) ?? name,
