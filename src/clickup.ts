@@ -473,7 +473,7 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
   for (const task of tasks) {
     const assignees = task.assignees.length ? task.assignees : ["Unassigned"];
     for (const assignee of assignees) {
-      const person = rosterMembers.length ? matchRosterMember(assignee, rosterMembers) : assignee;
+      const person = rosterMembers.length ? matchRosterMember(assignee, rosterMembers) ?? cleanPersonName(assignee) : cleanPersonName(assignee);
       if (!person) continue;
       const existing = people.get(person) ?? [];
       existing.push(task);
@@ -502,7 +502,10 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
 }
 
 function normalizePersonName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return name.toLowerCase()
+    .replace(/\bshreejal\b/g, "shrijal")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function cleanPersonName(name: string): string {

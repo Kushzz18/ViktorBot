@@ -350,18 +350,53 @@ const CLICKUP_WORKLOAD_TEAM_CHANNELS: Record<WorkflowTeam, string> = {
 };
 const WORKFLOW_TEAM_MEMBERS: Record<WorkflowTeam, string[]> = {
   "Team AB": [
+    "Anish Maharjan",
+    "Sujan Shrestha",
+    "Swagat",
+    "Bhuwan",
+    "Kriti Karki",
+    "Krishna Sunuwar",
+    "Nabin Khadka",
+    "Bibek",
+    "Prakash Tyata",
     "Kushal",
-    "Teammate AB 1",
-    "Teammate AB 2",
-    "Teammate AB 3",
-    "Teammate AB 4"
+    "Samir Luintel",
+    "Sushan",
+    "Kuber Kathayat",
+    "Shishir",
+    "Chirag Agrawal",
+    "Ashmita Pandey",
+    "Prativa Shrestha",
+    "Subina Khadka",
+    "Sujata Kutuwa",
+    "Shreejal Mhrzn"
   ],
   "Team CD": [
+    "Biraj",
+    "Bijay Koirala",
+    "Nabin Kandel",
+    "Dipson",
+    "Aashraya Pokhrel",
+    "Yagya",
+    "Prakriti Shrestha",
+    "Anista Bayalkoti",
+    "Prakash Tyata",
     "Kushal",
-    "Teammate CD 1",
-    "Teammate CD 2",
-    "Teammate CD 3",
-    "Teammate CD 4"
+    "Samir Luintel",
+    "Sushan",
+    "Subarna Khadka",
+    "Anish Shrestha",
+    "Deepak Chaudhary",
+    "Bhuwan",
+    "Roshan Sah",
+    "Neha Khadka",
+    "Shreejal Mhrzn",
+    "Rajeev",
+    "Rojen Shrestha",
+    "Ashmita Pandey",
+    "Prativa Shrestha",
+    "Subina Khadka",
+    "Sujata Kutuwa"
   ]
 };
 const UNSUPPORTED_REQUEST_NOTIFY_USER_ID = "U048TPLUE1J";
@@ -3111,14 +3146,20 @@ function assigneeMatchesTeamMember(assignee: string, member: string): boolean {
   const normalizedAssignee = normalizePersonForWorkload(assignee);
   const normalizedMember = normalizePersonForWorkload(member);
   if (!normalizedAssignee || !normalizedMember) return false;
+  const assigneeFirst = normalizedAssignee.split(/\s+/)[0];
+  const memberFirst = normalizedMember.split(/\s+/)[0];
   return normalizedAssignee === normalizedMember ||
     normalizedAssignee.includes(normalizedMember) ||
     normalizedMember.includes(normalizedAssignee) ||
-    normalizedMember.split(/\s+/).every((part) => normalizedAssignee.includes(part));
+    normalizedMember.split(/\s+/).every((part) => normalizedAssignee.includes(part)) ||
+    (assigneeFirst === "chirag" && memberFirst === "chirag");
 }
 
 function normalizePersonForWorkload(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.toLowerCase()
+    .replace(/\bshreejal\b/g, "shrijal")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function taskInClickUpRange(task: ClickUpHealthTask, range?: ClickUpDateRange): boolean {
