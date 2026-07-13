@@ -618,6 +618,19 @@ app.event("app_mention", async (args) => {
       return;
     }
 
+    const earlyClickUpIntent = classifyNaturalIntent(text);
+    if (earlyClickUpIntent.domain === "clickup") {
+      const clickUpAnswer = await handleNaturalClickUpQuestion(client as SlackClient, text, event.channel, earlyClickUpIntent, event.user);
+      if (clickUpAnswer) {
+        await client.chat.postMessage({
+          channel: event.channel,
+          thread_ts: replyThreadTs,
+          text: clickUpAnswer
+        });
+        return;
+      }
+    }
+
     const savedThreadLog = await handleSaveThisToClientLogCommand(client as SlackClient, event.channel, replyThreadTs, event.ts, text, mentionClient?.client, event.user);
     if (savedThreadLog) {
       await client.chat.postMessage({
@@ -720,7 +733,8 @@ app.event("app_mention", async (args) => {
         channelName: channelInfo?.name,
         inferredClient,
         threadTs: replyThreadTs,
-        files: event.files
+        files: event.files,
+        requesterUserId: event.user
       });
 
       await client.chat.postMessage({
@@ -961,6 +975,19 @@ app.message(async (args) => {
     const previousData = getLastDataResponse(directMessage.channel, directMessage.thread_ts);
     const contextualClientName = mentionedClient?.client ?? previousData?.clientName ?? getRecentClientContext(directMessage.channel);
 
+    const earlyClickUpIntent = classifyNaturalIntent(text);
+    if (earlyClickUpIntent.domain === "clickup") {
+      const clickUpAnswer = await handleNaturalClickUpQuestion(client as SlackClient, text, directMessage.channel, earlyClickUpIntent, directMessage.user);
+      if (clickUpAnswer) {
+        await client.chat.postMessage({
+          channel: directMessage.channel,
+          thread_ts: directMessage.thread_ts,
+          text: clickUpAnswer
+        });
+        return;
+      }
+    }
+
     const savedThreadLog = directMessage.thread_ts && directMessage.ts
       ? await handleSaveThisToClientLogCommand(client as SlackClient, directMessage.channel, directMessage.thread_ts, directMessage.ts, text, contextualClientName, directMessage.user)
       : undefined;
@@ -1160,7 +1187,10 @@ app.message(async (args) => {
     }
 
     if (!isCreateTaskCommand(text)) {
-      const answer = await answerWithAgentContext(client as SlackClient, directMessage.channel, text, { files: directMessage.files });
+      const answer = await answerWithAgentContext(client as SlackClient, directMessage.channel, text, {
+        files: directMessage.files,
+        requesterUserId: directMessage.user
+      });
       await client.chat.postMessage({ channel: directMessage.channel, text: answer });
       return;
     }
@@ -1625,7 +1655,8 @@ async function handleChannelThreadContinuation(
     const answer = await answerWithAgentContext(client, message.channel, message.text, {
       channelName: channelInfo?.name,
       inferredClient,
-      threadTs: message.threadTs
+      threadTs: message.threadTs,
+      requesterUserId: message.user
     });
     await client.chat.postMessage({
       channel: message.channel,
@@ -3235,26 +3266,74 @@ function parseClickUpDateRange(text: string): ClickUpDateRange {
 }
 
 function hasExplicitClickUpDateScope(text: string): boolean {
-  return /\b(today|daily|yesterday|week|weekly|month|monthly|all\s*time|any\s*time|without\s+date\s+scope|\d{4}-\d{2}-\d{2})\b/i.test(text);
+  return /\b(today|daily|yesterday|week|weekly|month|monthly|all\s*time|any\s*time|without\s+date\s+scope|\d{4}-\d{2}-\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?)\b/i.test(text);
 }
 
 function parseClickUpCustomRange(text: string): ClickUpDateRange | undefined {
   const match = text.match(/\b(?:from|between)?\s*(\d{4}-\d{2}-\d{2})\s*(?:to|and|-)\s*(\d{4}-\d{2}-\d{2})\b/i);
-  if (!match?.[1] || !match[2]) return undefined;
-  const start = parseLocalDate(match[1]);
-  const end = parseLocalDate(match[2]);
-  if (!start || !end) return undefined;
-  return {
-    label: `${formatLocalDate(start)} to ${formatLocalDate(end)}`,
-    start: startOfDay(start).getTime(),
-    end: endOfDay(end).getTime()
-  };
+  if (match?.[1] && match[2]) {
+    const start = parseLocalDate(match[1]);
+    const end = parseLocalDate(match[2]);
+    if (!start || !end) return undefined;
+    return {
+      label: `${formatLocalDate(start)} to ${formatLocalDate(end)}`,
+      start: startOfDay(start).getTime(),
+      end: endOfDay(end).getTime()
+    };
+  }
+
+  const singleIso = text.match(/\b(\d{4}-\d{2}-\d{2})\b/i);
+  if (singleIso?.[1]) {
+    const day = parseLocalDate(singleIso[1]);
+    if (!day) return undefined;
+    return { label: formatLocalDate(day), start: startOfDay(day).getTime(), end: endOfDay(day).getTime() };
+  }
+
+  const natural = parseNaturalMonthDate(text);
+  if (natural) {
+    return { label: formatLocalDate(natural), start: startOfDay(natural).getTime(), end: endOfDay(natural).getTime() };
+  }
 }
 
 function parseLocalDate(value: string): Date | undefined {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return undefined;
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function parseNaturalMonthDate(text: string): Date | undefined {
+  const monthPattern = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+  const dayThenMonth = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${monthPattern}(?:\\s*,?\\s*(\\d{4}))?\\b`, "i");
+  const monthThenDay = new RegExp(`\\b${monthPattern}\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(\\d{4}))?\\b`, "i");
+  const dayMatch = text.match(dayThenMonth);
+  const monthMatch = dayMatch ? undefined : text.match(monthThenDay);
+  const day = dayMatch?.[1] ? Number(dayMatch[1]) : monthMatch?.[2] ? Number(monthMatch[2]) : undefined;
+  const monthName = dayMatch?.[2] ?? monthMatch?.[1];
+  const year = Number(dayMatch?.[3] ?? monthMatch?.[3] ?? new Date().getFullYear());
+  const month = monthName ? clickUpMonthIndex(monthName) : undefined;
+  if (!day || month === undefined || !Number.isInteger(year)) return undefined;
+  const parsed = new Date(year, month, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month || parsed.getDate() !== day) return undefined;
+  return parsed;
+}
+
+function clickUpMonthIndex(value: string): number | undefined {
+  const key = value.toLowerCase().slice(0, 3);
+  const months: Record<string, number> = {
+    jan: 0,
+    feb: 1,
+    mar: 2,
+    apr: 3,
+    may: 4,
+    jun: 5,
+    jul: 6,
+    aug: 7,
+    sep: 8,
+    oct: 9,
+    nov: 10,
+    dec: 11
+  };
+  return months[key];
 }
 
 function startOfWeek(date: Date): Date {
@@ -4096,6 +4175,7 @@ async function answerWithAgentContext(
     inferredClient?: ClientConfig;
     threadTs?: string;
     files?: SlackFileRef[];
+    requesterUserId?: string;
   }
 ): Promise<string> {
   const inferredClient = options?.inferredClient ?? await inferClientFromText(text);
@@ -4123,7 +4203,7 @@ async function answerWithAgentContext(
   if (naturalTaskLocation) return naturalTaskLocation;
 
   const naturalClickUp = intent.domain === "clickup"
-    ? await handleNaturalClickUpQuestion(client, text, conversationId, intent)
+    ? await handleNaturalClickUpQuestion(client, text, conversationId, intent, options?.requesterUserId)
     : undefined;
   if (naturalClickUp) return naturalClickUp;
 
@@ -4300,7 +4380,13 @@ async function handleNaturalTaskLocationQuestion(text: string): Promise<string |
   return formatLastWorkbookTaskLocation();
 }
 
-async function handleNaturalClickUpQuestion(client: SlackClient, text: string, conversationId: string, intent = classifyNaturalIntent(text)): Promise<string | undefined> {
+async function handleNaturalClickUpQuestion(
+  client: SlackClient,
+  text: string,
+  conversationId: string,
+  intent = classifyNaturalIntent(text),
+  requesterUserId?: string
+): Promise<string | undefined> {
   if (intent.domain !== "clickup") return undefined;
 
   const range = parseClickUpDateRange(text);
@@ -4379,8 +4465,10 @@ async function handleNaturalClickUpQuestion(client: SlackClient, text: string, c
   }
 
   if (intent.domain === "clickup" && intent.action === "workload" && intent.scope === "assignee" && intent.target) {
-    const tasks = await getClickUpWorkload({ assignee: intent.target, range });
-    return formatClickUpTaskList(`ClickUp tasks for ${intent.target}`, tasks, {
+    const target = await resolveClickUpAssigneeTarget(client, intent.target, requesterUserId);
+    if (!target) return "I can fetch your ClickUp tasks, but I could not match your Slack profile to a ClickUp assignee name.";
+    const tasks = await getClickUpWorkload({ assignee: target, range });
+    return formatClickUpTaskList(`ClickUp tasks for ${target}`, tasks, {
       rangeLabel: range.label,
       followUp: "Need this month, all time, or a custom date range as well?"
     });
@@ -4400,6 +4488,31 @@ async function handleNaturalClickUpQuestion(client: SlackClient, text: string, c
   }
 
   return undefined;
+}
+
+async function resolveClickUpAssigneeTarget(client: SlackClient, target: string, requesterUserId?: string): Promise<string | undefined> {
+  const cleaned = cleanClickUpAssigneeTarget(target);
+  if (!/^(?:me|my|mine|myself)$/i.test(cleaned)) return cleaned;
+  if (!requesterUserId) return undefined;
+  return resolveSlackUserDisplayName(client, requesterUserId);
+}
+
+function cleanClickUpAssigneeTarget(value: string): string {
+  return value
+    .replace(/\b(clickup|tasks?|tickets?|details|workload)\b/gi, " ")
+    .replace(/\b(?:today|daily|yesterday|this\s+week|current\s+week|last\s+week|previous\s+week|this\s+month|current\s+month|last\s+month|previous\s+month|all\s+time|any\s+time)\b/gi, " ")
+    .replace(/\b(?:on|for|from)\s+\d{4}-\d{2}-\d{2}\b/gi, " ")
+    .replace(/\b(?:on|for|from)\s+\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?\b/gi, " ")
+    .replace(/\b(?:on|for|from)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+\d{4})?\b/gi, " ")
+    .replace(/[?.!]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function resolveSlackUserDisplayName(client: SlackClient, userId: string): Promise<string | undefined> {
+  const users = await listWorkspaceUsers(client);
+  const user = users.find((item) => item.id === userId);
+  return user?.name?.replace(/\s+/g, " ").trim() || undefined;
 }
 
 async function handleNaturalClientMemoryQuestion(text: string, inferredClient?: ClientConfig): Promise<string | undefined> {

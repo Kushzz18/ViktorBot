@@ -63,6 +63,10 @@ export type NaturalIntent =
 export function classifyNaturalIntent(text: string): NaturalIntent {
   const normalized = text.replace(/\s+/g, " ").trim();
 
+  if (isPersonalClickUpTaskLookup(normalized)) {
+    return { domain: "clickup", action: "workload", scope: "assignee", target: "me" };
+  }
+
   const highLevel = classifyHighLevelIntent(normalized);
   if (highLevel) return highLevel;
 
@@ -89,13 +93,13 @@ export function classifyNaturalIntent(text: string): NaturalIntent {
     return { domain: "clickup", action: "workload", scope: "team", target: normalizeTeamTarget(teamWorkload[1]) };
   }
 
-  const assigneeWorkload = normalized.match(/\b(?:show|what(?:'s| is)|list)?\s*(?:workload|tasks?)\s+(?:for|assigned to)\s+([^?]+)$/i);
+  const assigneeWorkload = normalized.match(/\b(?:show|what(?:'s| is)|list|fetch|get|pull|send|provide)?\s*(?:clickup\s+)?(?:workload|tasks?|task\s+details|details)\s+(?:for|assigned to|of)\s+([^?]+)$/i);
   if (assigneeWorkload?.[1]) {
     const target = assigneeWorkload[1].replace(/\b(clickup|tasks?|tickets?)\b/gi, "").trim();
     return { domain: "clickup", action: "workload", scope: "assignee", target };
   }
 
-  const search = normalized.match(/\b(?:find|search|show|list)\s+(?:clickup\s+)?tasks?\s+(?:about|for|matching|with)?\s+(.+)$/i);
+  const search = normalized.match(/\b(?:find|search|show|list|fetch|get|pull)\s+(?:clickup\s+)?tasks?\s+(?:about|for|matching|with)?\s+(.+)$/i);
   if (search?.[1]) {
     const query = cleanClickUpSearchQuery(search[1]);
     if (query) return { domain: "clickup", action: "search_tasks", query };
@@ -167,6 +171,13 @@ function isAllTeamWorkload(text: string): boolean {
     /\bteam\s+a\b[\s\S]*\bteam\s+d\b[\s\S]*\bworkload\b/i.test(text) ||
     /\bworkload\b[\s\S]*\bteam\s+a\b[\s\S]*\bteam\s+d\b/i.test(text) ||
     /\bteam\s+a\s*,\s*(?:team\s+)?b\s*,\s*(?:team\s+)?c\s*,\s*(?:team\s+)?d\b[\s\S]*\bworkload\b/i.test(text);
+}
+
+function isPersonalClickUpTaskLookup(text: string): boolean {
+  if (!/\bclickup\b/i.test(text)) return false;
+  if (!/\b(?:my|me|mine|assigned to me)\b/i.test(text)) return false;
+  if (!/\b(?:tasks?|details|workload|work|activity|log)\b/i.test(text)) return false;
+  return /\b(?:show|list|find|fetch|get|pull|send|provide|what(?:'s| is)|need)\b/i.test(text);
 }
 
 function cleanClickUpSearchQuery(value: string): string {
