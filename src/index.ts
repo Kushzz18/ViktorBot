@@ -4465,10 +4465,11 @@ async function handleNaturalClickUpQuestion(
   }
 
   if (intent.domain === "clickup" && intent.action === "workload" && intent.scope === "assignee" && intent.target) {
-    const target = await resolveClickUpAssigneeTarget(client, intent.target, requesterUserId);
-    if (!target) return "I can fetch your ClickUp tasks, but I could not match your Slack profile to a ClickUp assignee name.";
-    const tasks = await getClickUpWorkload({ assignee: target, range });
-    return formatClickUpTaskList(`ClickUp tasks for ${target}`, tasks, {
+    const targets = await resolveClickUpAssigneeTargets(client, intent.target, requesterUserId);
+    if (!targets.length) return "I can fetch your ClickUp tasks, but I could not match your Slack profile to a ClickUp assignee name.";
+    const chunks = await Promise.all(targets.map((target) => getClickUpWorkload({ assignee: target, range })));
+    const tasks = uniqueClickUpTasks(chunks.flat());
+    return formatClickUpTaskList(`ClickUp tasks for ${formatAssigneeTargetList(targets)}`, tasks, {
       rangeLabel: range.label,
       followUp: "Need this month, all time, or a custom date range as well?"
     });
@@ -4490,23 +4491,42 @@ async function handleNaturalClickUpQuestion(
   return undefined;
 }
 
-async function resolveClickUpAssigneeTarget(client: SlackClient, target: string, requesterUserId?: string): Promise<string | undefined> {
-  const cleaned = cleanClickUpAssigneeTarget(target);
-  if (!/^(?:me|my|mine|myself)$/i.test(cleaned)) return cleaned;
-  if (!requesterUserId) return undefined;
-  return resolveSlackUserDisplayName(client, requesterUserId);
+async function resolveClickUpAssigneeTargets(client: SlackClient, target: string, requesterUserId?: string): Promise<string[]> {
+  const cleanedTargets = splitClickUpAssigneeTargets(cleanClickUpAssigneeTarget(target));
+  const resolved = await Promise.all(cleanedTargets.map(async (cleaned) => {
+    if (!/^(?:me|my|mine|myself)$/i.test(cleaned)) return cleaned;
+    return requesterUserId ? resolveSlackUserDisplayName(client, requesterUserId) : undefined;
+  }));
+  return resolved
+    .map((item) => item?.replace(/\s+/g, " ").trim())
+    .filter((item): item is string => Boolean(item));
 }
 
 function cleanClickUpAssigneeTarget(value: string): string {
   return value
+    .replace(/\bdipsan\b/gi, "Dipson")
     .replace(/\b(clickup|tasks?|tickets?|details|workload)\b/gi, " ")
+    .replace(/\b(?:for|on|from)\s+(?:today|daily|yesterday|this\s+week|current\s+week|last\s+week|previous\s+week|this\s+month|current\s+month|last\s+month|previous\s+month|all\s+time|any\s+time)\b/gi, " ")
     .replace(/\b(?:today|daily|yesterday|this\s+week|current\s+week|last\s+week|previous\s+week|this\s+month|current\s+month|last\s+month|previous\s+month|all\s+time|any\s+time)\b/gi, " ")
     .replace(/\b(?:on|for|from)\s+\d{4}-\d{2}-\d{2}\b/gi, " ")
     .replace(/\b(?:on|for|from)\s+\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?\b/gi, " ")
     .replace(/\b(?:on|for|from)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+\d{4})?\b/gi, " ")
+    .replace(/\b(?:for|on|from|of|assigned to)\s*$/gi, " ")
     .replace(/[?.!]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function splitClickUpAssigneeTargets(value: string): string[] {
+  return value
+    .split(/\s*(?:,|&|\band\b|\+)\s*/i)
+    .map((item) => cleanClickUpAssigneeTarget(item))
+    .filter(Boolean);
+}
+
+function formatAssigneeTargetList(targets: string[]): string {
+  if (targets.length <= 2) return targets.join(" and ");
+  return `${targets.slice(0, -1).join(", ")} and ${targets[targets.length - 1]}`;
 }
 
 async function resolveSlackUserDisplayName(client: SlackClient, userId: string): Promise<string | undefined> {
