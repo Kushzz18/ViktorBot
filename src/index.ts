@@ -4472,6 +4472,7 @@ async function handleNaturalClickUpQuestion(
     const tasks = uniqueClickUpTasks(chunks.flat());
     return formatClickUpTaskList(`ClickUp tasks for ${formatAssigneeTargetList(targets)}`, tasks, {
       rangeLabel: assigneeRange.label,
+      assigneeSummaryNames: targets,
       followUp: "Need this month, all time, or a custom date range as well?"
     });
   }

@@ -50,7 +50,7 @@ const STANDARD_STATUSES = [
   "Ready To Implement",
   "Complete"
 ];
-const WORKLOAD_STATUSES = STANDARD_STATUSES.filter((status) => status !== "Complete");
+const WORKLOAD_STATUSES = STANDARD_STATUSES;
 
 export async function createClickUpTask(draft: DraftTask): Promise<ClickUpTask> {
   const listId = await resolveListId(draft.targetListName);
@@ -284,7 +284,7 @@ export function formatClickUpHealth(tasks: ClickUpHealthTask[], listName?: strin
   ].filter(Boolean).join("\n");
 }
 
-export function formatClickUpTaskList(title: string, tasks: ClickUpHealthTask[], options: { limit?: number; rangeLabel?: string; followUp?: string } = {}): string {
+export function formatClickUpTaskList(title: string, tasks: ClickUpHealthTask[], options: { limit?: number; rangeLabel?: string; followUp?: string; assigneeSummaryNames?: string[] } = {}): string {
   const limit = options.limit ?? 50;
   const shown = tasks.slice(0, limit);
   const rows = shown.map((task, index) => {
@@ -304,6 +304,7 @@ export function formatClickUpTaskList(title: string, tasks: ClickUpHealthTask[],
     options.rangeLabel ? `Date scope: ${options.rangeLabel}` : "",
     `Tasks found: ${tasks.length}${shown.length < tasks.length ? ` (showing ${shown.length})` : ""}`,
     rows.length ? rows.join("\n") : "No matching tasks found.",
+    options.assigneeSummaryNames?.length ? formatPeopleWorkloadTable(tasks, "Assignee workload summary", options.assigneeSummaryNames) : "",
     options.followUp ? `Follow-up: ${options.followUp}` : ""
   ].filter(Boolean).join("\n");
 }
@@ -328,7 +329,7 @@ export function formatClickUpWorkload(title: string, tasks: ClickUpHealthTask[],
 }
 
 export function formatClickUpTeamStatusMatrix(title: string, teamTasks: Array<{ team: string; tasks: ClickUpHealthTask[]; memberNames?: string[] }>, options: { rangeLabel?: string; includePeople?: boolean } = {}): string {
-  const statuses = unique([...WORKLOAD_STATUSES, ...teamTasks.flatMap((entry) => entry.tasks.map((task) => normalizeStatus(task.status)).filter((status) => status !== "Complete"))])
+  const statuses = unique([...WORKLOAD_STATUSES, ...teamTasks.flatMap((entry) => entry.tasks.map((task) => normalizeStatus(task.status)))])
     .sort((a, b) => statusSort(a) - statusSort(b) || a.localeCompare(b));
   const teamNames = teamTasks.map((entry) => entry.team);
   const rows = statuses.map((status) => [
@@ -467,7 +468,6 @@ function assigneeMatches(name: string, normalizedTarget: string): boolean {
 function formatStatusTable(tasks: ClickUpHealthTask[], title: string): string {
   const counts = new Map<string, number>();
   for (const task of tasks) {
-    if (isCompleteStatus(task.status)) continue;
     const status = normalizeStatus(task.status);
     counts.set(status, (counts.get(status) ?? 0) + 1);
   }
@@ -496,23 +496,23 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
   }
   const displayNames = shortDisplayNames([...people.keys()]);
   const rows = [...people.entries()]
-    .map(([name, assignedTasks]) => [name, assignedTasks.filter((task) => !isCompleteStatus(task.status))] as const)
-    .filter(([, activeAssignedTasks]) => activeAssignedTasks.length > 0)
+    .filter(([, assignedTasks]) => assignedTasks.length > 0)
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-    .map(([name, activeAssignedTasks]) => [
+    .map(([name, assignedTasks]) => [
       displayNames.get(name) ?? name,
-      String(activeAssignedTasks.length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "To Do").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "In Progress").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "Today's Plan").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "Roadblock").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "Review").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "Revision").length),
-      String(activeAssignedTasks.filter((task) => normalizeStatus(task.status) === "Ready To Implement").length)
+      String(assignedTasks.length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "To Do").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "In Progress").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Today's Plan").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Roadblock").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Review").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Revision").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Ready To Implement").length),
+      String(assignedTasks.filter((task) => normalizeStatus(task.status) === "Complete").length)
     ]);
   return [`*${title}*`, codeTable(
-    ["Person", "Total", "ToDo", "Prog", "Plan", "Block", "Review", "Rev", "Ready"],
-    rows.length ? rows : [["None", "0", "0", "0", "0", "0", "0", "0", "0"]]
+    ["Person", "Total", "ToDo", "Prog", "Plan", "Block", "Review", "Rev", "Ready", "Done"],
+    rows.length ? rows : [["None", "0", "0", "0", "0", "0", "0", "0", "0", "0"]]
   )].join("\n");
 }
 
