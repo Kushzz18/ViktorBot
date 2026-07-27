@@ -304,7 +304,7 @@ export function formatClickUpTaskList(title: string, tasks: ClickUpHealthTask[],
     options.rangeLabel ? `Date scope: ${options.rangeLabel}` : "",
     `Tasks found: ${tasks.length}${shown.length < tasks.length ? ` (showing ${shown.length})` : ""}`,
     rows.length ? rows.join("\n") : "No matching tasks found.",
-    options.assigneeSummaryNames?.length ? formatPeopleWorkloadTable(tasks, "Assignee workload summary", options.assigneeSummaryNames) : "",
+    options.assigneeSummaryNames?.length ? formatPeopleWorkloadTable(tasks, "Assignee workload summary", options.assigneeSummaryNames, { restrictToMembers: true }) : "",
     options.followUp ? `Follow-up: ${options.followUp}` : ""
   ].filter(Boolean).join("\n");
 }
@@ -478,7 +478,7 @@ function formatStatusTable(tasks: ClickUpHealthTask[], title: string): string {
   return [`*${title}*`, codeTable(["Status", "Tasks"], rows.length ? rows : [["None", "0"]])].join("\n");
 }
 
-function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People workload", memberNames?: string[]): string {
+function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People workload", memberNames?: string[], options: { restrictToMembers?: boolean } = {}): string {
   const rosterMembers = splitRosterMembers(memberNames ?? []);
   const people = new Map<string, ClickUpHealthTask[]>();
   for (const member of rosterMembers) people.set(member, []);
@@ -487,7 +487,9 @@ function formatPeopleWorkloadTable(tasks: ClickUpHealthTask[], title = "People w
     const assignees = task.assignees.length ? task.assignees : ["Unassigned"];
     for (const assignee of assignees) {
       if (assignee === "Unassigned") continue;
-      const person = rosterMembers.length ? matchRosterMember(assignee, rosterMembers) ?? cleanPersonName(assignee) : cleanPersonName(assignee);
+      const rosterMatch = rosterMembers.length ? matchRosterMember(assignee, rosterMembers) : undefined;
+      if (options.restrictToMembers && !rosterMatch) continue;
+      const person = rosterMatch ?? cleanPersonName(assignee);
       if (!person) continue;
       const existing = people.get(person) ?? [];
       existing.push(task);
