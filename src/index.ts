@@ -4467,10 +4467,11 @@ async function handleNaturalClickUpQuestion(
   if (intent.domain === "clickup" && intent.action === "workload" && intent.scope === "assignee" && intent.target) {
     const targets = await resolveClickUpAssigneeTargets(client, intent.target, requesterUserId);
     if (!targets.length) return "I can fetch your ClickUp tasks, but I could not match your Slack profile to a ClickUp assignee name.";
-    const chunks = await Promise.all(targets.map((target) => getClickUpWorkload({ assignee: target, range })));
+    const assigneeRange = { ...range, includeCompletedActivity: true };
+    const chunks = await Promise.all(targets.map((target) => getClickUpWorkload({ assignee: target, range: assigneeRange })));
     const tasks = uniqueClickUpTasks(chunks.flat());
     return formatClickUpTaskList(`ClickUp tasks for ${formatAssigneeTargetList(targets)}`, tasks, {
-      rangeLabel: range.label,
+      rangeLabel: assigneeRange.label,
       followUp: "Need this month, all time, or a custom date range as well?"
     });
   }

@@ -13,6 +13,8 @@ export type ClickUpHealthTask = {
   status?: string;
   url?: string;
   dueDate?: number;
+  completedAt?: number;
+  closedAt?: number;
   updatedAt?: number;
   timeEstimate?: number;
   listName?: string;
@@ -35,6 +37,7 @@ export type ClickUpDateRange = {
   label: string;
   start?: number;
   end?: number;
+  includeCompletedActivity?: boolean;
 };
 
 const STANDARD_STATUSES = [
@@ -287,6 +290,8 @@ export function formatClickUpTaskList(title: string, tasks: ClickUpHealthTask[],
   const rows = shown.map((task, index) => {
     const parts = [
       task.status,
+      task.completedAt ? `completed ${formatDate(task.completedAt)}` : "",
+      !task.completedAt && task.closedAt ? `closed ${formatDate(task.closedAt)}` : "",
       task.dueDate ? `due ${formatDate(task.dueDate)}` : "",
       task.timeEstimate ? `estimate ${formatDuration(task.timeEstimate)}` : "",
       task.assignees.length ? task.assignees.join(", ") : "unassigned",
@@ -390,6 +395,8 @@ function normalizeTask(raw: unknown, listName?: string): ClickUpHealthTask {
     name?: string;
     url?: string;
     due_date?: string | null;
+    date_done?: string | null;
+    date_closed?: string | null;
     date_updated?: string | null;
     time_estimate?: number | null;
     status?: { status?: string };
@@ -404,6 +411,8 @@ function normalizeTask(raw: unknown, listName?: string): ClickUpHealthTask {
     status: task.status?.status,
     url: task.url ?? `https://app.clickup.com/t/${id}`,
     dueDate: task.due_date ? Number(task.due_date) : undefined,
+    completedAt: task.date_done ? Number(task.date_done) : undefined,
+    closedAt: task.date_closed ? Number(task.date_closed) : undefined,
     updatedAt: task.date_updated ? Number(task.date_updated) : undefined,
     timeEstimate: typeof task.time_estimate === "number" ? task.time_estimate : undefined,
     listName: task.list?.name ?? listName,
@@ -438,11 +447,15 @@ function normalizeSearch(value: string): string {
 
 function taskInRange(task: ClickUpHealthTask, range?: ClickUpDateRange): boolean {
   if (!range || (!range.start && !range.end)) return true;
-  const value = task.dueDate;
-  if (!value) return false;
-  if (range.start && value < range.start) return false;
-  if (range.end && value > range.end) return false;
-  return true;
+  const values = [
+    task.dueDate,
+    ...(range.includeCompletedActivity ? [task.completedAt, task.closedAt] : [])
+  ].filter((value): value is number => typeof value === "number");
+  return values.some((value) => {
+    if (range.start && value < range.start) return false;
+    if (range.end && value > range.end) return false;
+    return true;
+  });
 }
 
 function assigneeMatches(name: string, normalizedTarget: string): boolean {
