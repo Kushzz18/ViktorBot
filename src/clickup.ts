@@ -51,6 +51,39 @@ const STANDARD_STATUSES = [
   "Complete"
 ];
 const WORKLOAD_STATUSES = STANDARD_STATUSES;
+const CLICKUP_MAX_RETRIES = 4;
+const CLICKUP_BASE_RETRY_MS = 2500;
+
+async function clickUpFetch(input: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt <= CLICKUP_MAX_RETRIES; attempt += 1) {
+    const response = await fetch(input, init);
+    if (!shouldRetryClickUpResponse(response) || attempt === CLICKUP_MAX_RETRIES) return response;
+
+    const waitMs = clickUpRetryDelayMs(response, attempt);
+    await response.text().catch(() => "");
+    await sleep(waitMs);
+  }
+
+  return fetch(input, init);
+}
+
+function shouldRetryClickUpResponse(response: Response): boolean {
+  return response.status === 429 || response.status === 408 || response.status >= 500;
+}
+
+function clickUpRetryDelayMs(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get("retry-after");
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1000, 60000);
+  }
+
+  return Math.min(CLICKUP_BASE_RETRY_MS * 2 ** attempt, 30000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function createClickUpTask(draft: DraftTask): Promise<ClickUpTask> {
   const listId = await resolveListId(draft.targetListName);
@@ -58,7 +91,7 @@ export async function createClickUpTask(draft: DraftTask): Promise<ClickUpTask> 
     .map((name) => config.ASSIGNEE_MAP[name.toLowerCase()])
     .filter((id): id is number => typeof id === "number");
 
-  const response = await fetch(`https://api.clickup.com/api/v2/list/${listId}/task`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/list/${listId}/task`, {
     method: "POST",
     headers: {
       Authorization: config.CLICKUP_API_TOKEN,
@@ -124,7 +157,7 @@ export async function getClickUpOverdueTasks(scope?: { assignee?: string; team?:
 }
 
 export async function getClickUpTaskDetails(taskId: string): Promise<ClickUpHealthTask> {
-  const response = await fetch(`https://api.clickup.com/api/v2/task/${taskId}`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/task/${taskId}`, {
     headers: {
       Authorization: config.CLICKUP_API_TOKEN
     }
@@ -138,7 +171,7 @@ export async function getClickUpTaskDetails(taskId: string): Promise<ClickUpHeal
 }
 
 export async function getClickUpTaskComments(taskId: string): Promise<ClickUpComment[]> {
-  const response = await fetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, {
     headers: {
       Authorization: config.CLICKUP_API_TOKEN
     }
@@ -166,13 +199,17 @@ export async function getClickUpTasksForScope(listName?: string, includeClosed =
   if (listName) return fetchClickUpTasksForList(await resolveListId(listName), listName, includeClosed);
   const lists = await listClickUpLists();
   const scopedLists = lists.length ? lists : [{ id: config.CLICKUP_LIST_ID, name: "Default" }];
-  const chunks = await Promise.all(scopedLists.map((list) => fetchClickUpTasksForList(list.id, list.name, includeClosed)));
+  const chunks: ClickUpHealthTask[][] = [];
+  for (const list of scopedLists) {
+    chunks.push(await fetchClickUpTasksForList(list.id, list.name, includeClosed));
+    await sleep(250);
+  }
   return chunks.flat();
 }
 
 export async function listClickUpLists(): Promise<ClickUpList[]> {
   if (!config.CLICKUP_FOLDER_ID) return [];
-  const response = await fetch(`https://api.clickup.com/api/v2/folder/${config.CLICKUP_FOLDER_ID}/list`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/folder/${config.CLICKUP_FOLDER_ID}/list`, {
     headers: {
       Authorization: config.CLICKUP_API_TOKEN
     }
@@ -186,7 +223,7 @@ export async function listClickUpLists(): Promise<ClickUpList[]> {
 async function fetchClickUpTasksForList(listId: string, listName?: string, includeClosed = false): Promise<ClickUpHealthTask[]> {
   const tasks: unknown[] = [];
   for (let page = 0; page < 20; page += 1) {
-    const response = await fetch(
+    const response = await clickUpFetch(
       `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=${includeClosed ? "true" : "false"}&subtasks=true&page=${page}`,
       {
         headers: {
@@ -209,7 +246,7 @@ async function fetchClickUpTasksForList(listId: string, listName?: string, inclu
 }
 
 export async function addClickUpComment(taskId: string, commentText: string): Promise<void> {
-  const response = await fetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, {
     method: "POST",
     headers: {
       Authorization: config.CLICKUP_API_TOKEN,
@@ -240,7 +277,7 @@ export async function updateClickUpTask(input: {
   if (input.name) body.name = input.name;
   if (input.description) body.markdown_description = input.description;
 
-  const response = await fetch(`https://api.clickup.com/api/v2/task/${input.taskId}`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/task/${input.taskId}`, {
     method: "PUT",
     headers: {
       Authorization: config.CLICKUP_API_TOKEN,
@@ -370,7 +407,7 @@ async function resolveListId(targetListName?: string): Promise<string> {
     return config.CLICKUP_LIST_ID;
   }
 
-  const response = await fetch(`https://api.clickup.com/api/v2/folder/${config.CLICKUP_FOLDER_ID}/list`, {
+  const response = await clickUpFetch(`https://api.clickup.com/api/v2/folder/${config.CLICKUP_FOLDER_ID}/list`, {
     headers: {
       Authorization: config.CLICKUP_API_TOKEN
     }
